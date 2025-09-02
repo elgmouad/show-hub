@@ -1,0 +1,149 @@
+version: '3.8'
+
+networks:
+  showhub-network:
+    driver: bridge
+
+services:
+  # --- Platform Services ---
+  config-server:
+    build:
+      context: backend/config-service
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./showhub-config-repo:/app/showhub/showhub-config-repo
+    networks:
+      - showhub-network
+    depends_on:
+      - eureka-server
+
+  eureka-server:
+    build:
+      context: backend/service-discovery
+    container_name: eureka-server
+    ports:
+      - "8761:8761"
+    networks:
+      - showhub-network
+
+  # --- Application Services ---
+  api-gateway:
+    build:
+      context: backend/api-gateway
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    networks:
+      - showhub-network
+    depends_on:
+      - eureka-server
+      - config-server
+      - catalogue-service
+
+  catalogue-service:
+    build:
+      context: backend/catalogue-service
+    container_name: catalogue-service
+    ports:
+      - "8081:8081" # Expose on a different port than the gateway
+    networks:
+      - showhub-network
+    depends_on:
+      - eureka-server
+      - config-server
+      - postgres
+
+  # --- Backing Services ---
+
+  # Databases
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=showhub_catalog
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - showhub-network
+
+  mongodb:
+    image: mongo:6.0
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - showhub-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - showhub-network
+
+  # Messaging
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - showhub-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - showhub-network
+
+  rabbitmq:
+    image: rabbitmq:3.11-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"  # AMQP
+      - "15672:15672" # Management UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    networks:
+      - showhub-network
+
+  # Observability
+  zipkin:
+    image: openzipkin/zipkin:2
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - showhub-network
+
+volumes:
+  postgres-data:
+  mongo-data:
